@@ -23,16 +23,69 @@ Lementknight
 
 **Claim comment**
 
-[Link to the comment where you claimed the issue. Use the comment's own permalink, not the
-issue page on its own. **Then paste the text of that comment underneath the link** — the
-pasted text is what this field is graded on, so copy across what you actually posted.]
+https://github.com/codepath/pathreview-ai301-fa26-s3/issues/61#issuecomment-6007296787
+
+> I'd like to claim this one as my first contribution to Path Review.
+>
+> I've been working through the health check code to understand how the app reports on its dependencies, and the `db.execute("SELECT 1")` probe in `api/routes/health.py` caught my eye: the issue says SQLAlchemy 2.x wants textual SQL wrapped in `text()`, so a reachable database could be reported as down.
+>
+> I haven't reproduced it yet. Next I'll bring up the documented Docker Compose stack on macOS from a fresh clone of my fork at `2f4e82f`, call `GET /health`, and check whether the 503 and the `ArgumentError` from the issue show up on my machine, with the server log for the same request. I've seen the other claims and repros on this thread, but I'll run my own steps in my own environment rather than rely on them. I'll post the exact commands, versions, and output as a follow-up comment on this issue.
+>
+> In short: I'm claiming #61, and my next step is an independent repro of the `/health` failure, which I'll report here.
 
 **Reproduction comment**
 
-[Link to the comment where you posted your reproduction. It must record the environment
-(OS, relevant versions, code state), steps a stranger could follow, and what you observed.
-**Then paste the text of that comment underneath the link** — the pasted text is what this
-field is graded on, so copy across what you actually posted.]
+https://github.com/codepath/pathreview-ai301-fa26-s3/issues/61#issuecomment-6007297812
+
+> Reproduced on my own machine. I wanted to see the `/health` failure from #61 through the real documented stack rather than rely on the earlier reports, so here are my exact steps and output.
+>
+> **Environment**
+>
+> - PathReview at `2f4e82f` (fork `Lementknight/pathreview-ai301-fa26-s3`), `git status --porcelain --untracked-files=no` empty.
+> - macOS 27.0, OrbStack (Docker 29.4.0, Compose 5.1.2), Python 3.14.7 in a fresh `.venv`.
+> - `pip install -e ".[dev]"` resolved SQLAlchemy 2.1.3, asyncpg 0.31.0, FastAPI 0.142.2, structlog 26.1.0.
+> - Services from `docker-compose.yml`: postgres:16-alpine (host port 5433), redis:7-alpine, chromadb 0.4.22.
+>
+> **Deviation from `docs/SETUP.md`, stated up front:** I ran the setup steps by hand and skipped the frontend `npm install` and `make run`, because `/health` only needs the API. I started the API with `uvicorn api.main:app --port 8000` instead.
+>
+> **Steps**
+>
+> 1. `cp .env.example .env` (defaults, no edits)
+> 2. `docker compose up -d`, then wait until `docker compose ps` shows `db` and `redis` healthy
+> 3. `python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"`
+> 4. `.venv/bin/alembic upgrade head` and `.venv/bin/python scripts/seed_db.py`
+> 5. `.venv/bin/uvicorn api.main:app --port 8000`
+> 6. In another shell: `curl -i http://localhost:8000/health`
+>
+> **What I saw**
+>
+> ```
+> HTTP/1.1 503 Service Unavailable
+> {"detail":{"status":"unhealthy","dependencies":{"postgres":"unhealthy","redis":"unhealthy","vector_db":"healthy"}, ...}}
+> ```
+>
+> Server log for the same request:
+>
+> ```
+> [error] postgres_health_check_failed error="Textual SQL expression 'SELECT 1' should be explicitly declared as text('SELECT 1')"
+> [error] redis_health_check_failed    error="'Settings' object has no attribute 'redis_host'"
+> [debug] vector_db_health_check_passed
+> ```
+>
+> So the `ArgumentError` the issue describes shows up exactly as reported, from `api/routes/health.py`.
+>
+> **Control: the database is reachable the whole time**
+>
+> - `docker compose exec db psql -U pathreview -d pathreview_dev -c "SELECT 1"` returns `1`.
+> - The app's own session (`core.database.AsyncSessionLocal`) running `text("SELECT 1")` returns `1`.
+>
+> So the failure is the raw string, not the connection.
+>
+> **One thing this issue does not cover:** the Redis line in that same response is a different error (`'Settings' object has no attribute 'redis_host'`). That looks like #62, so I'm leaving it out of this report. It does mean `/health` will still answer 503 after the Postgres probe is fixed until that one is too.
+>
+> **Not tried:** Linux and Windows, and SQLAlchemy 2.0.x (I got 2.1.3 from the unpinned install).
+>
+> In short: with the documented stack up, `GET /health` returns 503 with `"postgres": "unhealthy"` and the `ArgumentError` in the log, while Postgres answers `SELECT 1` fine, matching #61.
 
 ## Eval iterations
 
